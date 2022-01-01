@@ -104,6 +104,16 @@ int getCwd(char *buf, int buflen);
   See: https://man7.org/linux/man-pages/man2/write.2.html
 */
   int write(int fd, const char *buf, int count);
+  
+/**
+  Syscall 64
+  int writeOut(const char *buf, int count)
+  Writes up to count bytes from the buffer starting at buf to stdout. 
+  On success, the number of bytes written is returned, otherwise a negative
+  value (the negative errno). 
+  This is the same as int write(1, const char *buf, int count); 
+*/
+  int writeOut(const char *buf, int count);
 
   
 /**
@@ -118,24 +128,15 @@ int getCwd(char *buf, int buflen);
  */
   int writeZ(int fd, const char *asciiz);
 
-/**
-  Syscall 64
-  int writeOut(const char *buf, int count)
-  Writes up to count bytes from the buffer starting at buf to stdout. 
-  On success, the number of bytes written is returned, otherwise a negative
-  value (the negative errno). 
-  This is the same as int write(1, const char *buf, int count); 
-*/
-  int writeOut(const char *buf, int count);
   
   
 /**
   Syscall 64
   int writeZOut(const char *asciiz);
-  Writes a zero-terminated string to the file 
-  referred to by the file descriptor fd. On success, the number of bytes 
+  Writes a zero-terminated string to stdout
+  On success, the number of bytes 
   written is returned.
-  If the char buffer 'asciiz' does not end with NUL, the result is undetermined 
+  If the char buffer 'asciiz' does not end with \0, the result is undetermined 
   or can cause an error.
  */
   int writeZOut(const char *asciiz);
