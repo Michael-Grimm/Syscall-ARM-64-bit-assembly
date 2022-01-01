@@ -1,0 +1,423 @@
+.text
+/**
+  The following macros create global functions for system calls.
+  Function names and syscall numbers are found in:
+  https://github.com/torvalds/linux/blob/v5.8/include/uapi/asm-generic/unistd.h
+  Example: "#define __NR_openat 56"
+
+  ARM64 calling conventions:
+  See: https://man7.org/linux/man-pages/man2/syscall.2.html
+  Arguments from function calls: x0, x1 .... x5
+  Example: arguments in the C-function... int function(int, char*, int, int, ...);
+  appear in the registers:                             x0   x1    x2    x3   x4   x5 
+  Return value(s): in x0, x1              x0
+
+  Register for syscall number: x8 
+  Instruction:  svc #0 (Supervisor call)  The parameter #0 is not used              
+*/
+.macro SYSCALL functionName number
+ 	BEGIN_SYSCALL \functionName \number
+ 	END_SYSCALL \functionName
+.endm
+
+.macro BEGIN_SYSCALL functionName number
+	.type \functionName, %function
+	.global \functionName
+	\functionName:
+	stp x29, x30, [sp, #-16]!
+	mov  x8, #\number 
+.endm 
+
+.macro END_SYSCALL functionName
+    svc #0  //invokes syscall
+	ldp x29, x30, [sp], #16
+	ret
+	.size \functionName, (. - \functionName)
+.endm
+
+/**
+  int getCwd(char *buf, int buflen);
+  Stores the absolute pathname of the current working directory in the array
+  pointed to by buf. 
+  Returns the size of the pathname.
+  If the length of the absolute pathname exceeds buflen bytes, the negated value 
+  (-34) of errno ERANGE is returned. 
+  */
+SYSCALL getCwd 17
+
+
+
+/**
+  int openAt(int dirfd, const char *pathname, int access_mode);
+  int openAt(int dirfd, const char *pathname, int access_mode, int permission_mode);
+  Open/create a file for reading/writing...
+  See: https://man7.org/linux/man-pages/man2/open.2.html
+  
+  The special value -100 in dirfd indicates that openat should use the current 
+  working directory. This value can be found in:
+  https://github.com/torvalds/linux/blob/master/include/uapi/linux/fcntl.h
+  ["#define AT_FDCWD -100"]
+  
+  Flags for access modes (read/write only...) are here: 
+  https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/fcntl.h
+  The values are in octal. 
+  Examples:
+  O_RDONLY	00000
+  O_WRONLY	00001
+  O_RDWR	00002
+  O_CREAT	00100	 
+  O_TRUNC	01000	 
+  O_APPEND	02000
+  
+  If the access mode contains O_CREAT (0100), the permission modes must be set.
+  (the second function signature).
+  Flags for the permission modes (rwx...) are in:
+  https://github.com/torvalds/linux/blob/master/include/uapi/linux/stat.h
+  The values of the flags are in octal (!): e.g. S_IRWXU = 0700, S_IRUSR 0400
+  Values:
+  octal binary permission
+  00 	000 	none
+  01 	001 	execute only
+  02 	010 	write only
+  03 	011 	write and execute
+  04 	100 	read only
+  05 	101 	read and execute
+  06 	110 	read and write
+  07 	111 	read, write, and execute (full permissions)
+  Full permissions for user, group, others (read, write, execute): 0777
+  Read+write for user, read only for group, no permissions for other: 0640
+  
+  On success, openat returns the new file descriptor (a nonnegative integer).
+*/
+SYSCALL openAt 56
+
+/**
+  int openAtCwd(const char *pathname, int access_mode);
+  int openAtCwd(const char *pathname, int access_mode, int permission_mode);
+  Opens/creates a file for reading/writing... in the current working directory.
+  This is the same as int openat(-100, const char *path....).
+ */
+BEGIN_SYSCALL openAtCwd 56
+    mov x3, x2
+	mov x2, x1
+	mov x1, x0
+	mov x0, #-100
+END_SYSCALL openAtCwd
+
+
+/**
+  int close(int fd);
+  Closes a file descriptor, returns zero on success.
+  See: https://man7.org/linux/man-pages/man2/close.2.html
+*/
+SYSCALL close 57
+
+
+/**
+  int read(int fd, const char *buf, int count);
+  Reads from a file into a buffer.
+  If fd = 0, the in input is read from the keyboard (type ENTER ord CTRL-D 
+  to finish input).
+*/
+SYSCALL read 63
+
+/**
+  int readIn(const char *buf, int count);
+  Reads input from stdin into a buffer (type ENTER or CTRL-D to finish input).
+*/
+BEGIN_SYSCALL readIn 63
+	mov x2, x1
+	mov x1, x0
+	mov x0, #0
+END_SYSCALL readIn
+
+/**
+  int write(int fd, const char *buf, int count);
+  Writes up to count bytes from the buffer starting at buf  to the file 
+  referred to by the file descriptor fd. On success, the number of bytes 
+  written is returned.
+  If fd = 1, the output is directed to stdout.
+  See: https://man7.org/linux/man-pages/man2/write.2.html
+*/
+SYSCALL write 64 
+
+
+
+/**
+  int writeOut(const char *buf, int count)
+  Writes up to count bytes from the buffer starting at buf to stdout. 
+  On success, the number of bytes written is returned, otherwise a negative
+  value (the negative errno).  
+*/
+BEGIN_SYSCALL writeOut 64
+	mov x2, x1
+	mov x1, x0
+	mov x0, #1
+END_SYSCALL writeOut
+
+/**
+ * The macro ASCIIZ_LENGTH determines the length of a zero-terminated char-array
+ * The result is in register 'length'
+ */
+.macro ASCIIZ_LENGTH buffer length w_temp 
+    mov \length, xzr
+	loopasciiz\@:
+	ldrb \w_temp, [\buffer], #1
+    and \w_temp, \w_temp, #0xff
+    cbz \w_temp, endasciizlength\@
+    add \length, \length, #1
+    b loopasciiz\@
+    endasciizlength\@:
+.endm
+
+/**
+ * int writeZ(int fd, const char *asciiz);
+ * Writes a zero-terminated string to the file 
+  referred to by the file descriptor fd. On success, the number of bytes 
+  written is returned.
+  If the char buffer 'asciiz' does not end with NUL, the result is undetermined 
+  or can cause an error.
+  If fd = 1, the output is directed to stdout.
+ */
+BEGIN_SYSCALL writeZ 64
+    mov x3, x1
+    ASCIIZ_LENGTH x3 x2 w4
+END_SYSCALL writeZ
+
+/**
+ * int writeZOut(const char *asciiz);
+ * Writes a zero-terminated string to the file 
+  referred to by the file descriptor fd. On success, the number of bytes 
+  written is returned.
+  If the char buffer 'asciiz' does not end with NUL, the result is undetermined 
+  or can cause an error.
+ */
+BEGIN_SYSCALL writeZOut 64
+	mov x1, x0
+    mov x3, x0
+    mov x0, #1
+    ASCIIZ_LENGTH x3 x2 w4
+END_SYSCALL writeZOut
+
+/**
+  Syscall 64
+  int newLine();
+  writes a newline character to stdout.
+  On success, the number of bytes (16) written is returned, otherwise a negative
+  value (the negative errno).
+*/
+.section .rodata
+  newline: .quad 10
+.text
+BEGIN_SYSCALL newLine 64
+	mov x0, #1
+	adr x1, newline
+	mov x2, #1
+END_SYSCALL newLine
+
+/**
+  Functions for writing a long long integer in hexadecimal to a file or to stdout.
+*/
+.data
+hexadecimal: .quad 0, 0
+
+.text
+.macro CONVERT_NIBBLE_TO_ASCII accum  //uses x6 as temp
+    and x6, x1, x3    //mask x3 must bi initialized with 0xF. Input in x1
+    cmp x6, 9
+    bhi is_above_9\@
+    add x6, x6, 48 //'0'...'9'     0 + 48 -> '0'
+    b is_converted\@
+    is_above_9\@: 
+    add x6, x6, 87 //'a'...'f'     10 + 87 -> 'a'
+    is_converted\@:
+    lsl \accum, \accum, #8
+    orr \accum, \accum, x6
+    lsr x1, x1, #4
+.endm
+
+
+.macro CONVERT_U32_TO_ASCII accum
+	CONVERT_NIBBLE_TO_ASCII \accum 
+	CONVERT_NIBBLE_TO_ASCII \accum 
+	CONVERT_NIBBLE_TO_ASCII \accum 
+	CONVERT_NIBBLE_TO_ASCII \accum 
+	CONVERT_NIBBLE_TO_ASCII \accum 
+	CONVERT_NIBBLE_TO_ASCII \accum 
+	CONVERT_NIBBLE_TO_ASCII \accum 
+	CONVERT_NIBBLE_TO_ASCII \accum 
+.endm
+
+.macro WRITE_LONG_LONG_AS_HEX
+    //fd is in x0, value in x1, syscall number 64 in x8
+    mov x2, #16  //length of acii string 'hexadecimal' = 16 bytes
+    mov x3, 0xf  //mask 
+    mov x4, xzr
+    mov x5, xzr
+    CONVERT_U32_TO_ASCII x5   
+	CONVERT_U32_TO_ASCII x4  
+    adr x1, hexadecimal
+	stp x4, x5, [x1]  
+.endm
+
+/**
+  int writeHex(int fd, long long value);
+  Writes the value as hex to the file 
+  referred to by the file descriptor fd. 
+  On success, the number of bytes (16) written is returned.
+  If fd = 1, the output is directed to stdout.
+*/
+BEGIN_SYSCALL writeHex 64
+ 	WRITE_LONG_LONG_AS_HEX
+END_SYSCALL writeHex
+
+/**
+  int writeHexOut(long long value);
+  Writes the value as hex to stdout.
+  On success, the number of bytes (16) written is returned, otherwise a negative
+  value (the negative errno).  
+*/
+BEGIN_SYSCALL writeHexOut 64
+	mov x1, x0
+	mov x0, #1
+    WRITE_LONG_LONG_AS_HEX
+END_SYSCALL writeHexOut
+
+
+/**
+  void exit(int status);
+  Terminates the calling process.
+  A status of zero signals the regular end of the process.
+  See: https://man7.org/linux/man-pages/man2/exit.2.html
+*/
+SYSCALL exit 93
+
+
+/**
+ Functions for different clocks.
+ Return a long long with the time in nanoseconds.
+ From https://github.com/torvalds/linux
+ linux/include/uapi/linux/time.h 
+ The IDs of the various system clocks (for POSIX.1b interval timers):
+ CLOCK_REALTIME 0
+ CLOCK_MONOTONIC 1
+ CLOCK_PROCESS_CPUTIME_ID 2
+ CLOCK_THREAD_CPUTIME_ID 3
+ CLOCK_MONOTONIC_RAW 4
+ CLOCK_REALTIME_COARSE 5
+ CLOCK_MONOTONIC_COARSE 6
+ CLOCK_BOOTTIME 7
+*/
+.section .rodata
+
+nano: .quad 1000000000
+
+.data
+seconds:     .quad 0
+nanoseconds: .quad 0
+
+
+.text
+
+
+.macro END_SYSCALL_CLOCK functionname
+    adr x1, seconds
+    svc #0  //invokes syscall, result of syscall is in x0, normally 0
+    cbnz x0, endsyscallclock\@  //other value than zero? -> goto end
+    //seconds and nanoseconds are now in storage at label seconds and nanoseconds
+    adr x1, seconds 
+    ldp x2, x3, [x1]  //x2: seconds x3: nanoseconds
+    adr x1, nano    
+    ldr x1, [x1]      //x1: nano = 1000000000
+    madd x0, x1, x2, x3 //x0 = (x1*x2) + x3 = time in nanoseconds
+	endsyscallclock\@:
+	ldp x29, x30, [sp], #16
+	ret
+	.size \functionname, (. - \functionname)
+.endm
+
+BEGIN_SYSCALL getClockRealtime 113
+	mov x1, x0
+	mov x0, xzr 
+END_SYSCALL_CLOCK getClockRealtime
+
+BEGIN_SYSCALL getClockMonotonic 113
+	mov x1, x0
+	mov x0, #1 
+END_SYSCALL_CLOCK getClockMonotonic
+
+BEGIN_SYSCALL getClockProcessCpuTime 113
+	mov x1, x0
+	mov x0, #2 
+END_SYSCALL_CLOCK getClockProcessCpuTime
+
+BEGIN_SYSCALL getClockThreadCpuTime 113
+	mov x1, x0
+	mov x0, #3 
+END_SYSCALL_CLOCK getClockThreadCpuTime
+
+BEGIN_SYSCALL getClockMonotonicRaw 113
+	mov x1, x0
+	mov x0, #4 
+END_SYSCALL_CLOCK getClockMonotonicRaw
+
+BEGIN_SYSCALL getClockRealtimeCoarse 113
+	mov x1, x0
+	mov x0, #5 
+END_SYSCALL_CLOCK getClockRealtimeCoarse
+
+BEGIN_SYSCALL getClockMonotonicCoarse 113
+	mov x1, x0
+	mov x0, #6 
+END_SYSCALL_CLOCK getClockMonotonicCoarse
+
+BEGIN_SYSCALL getClockBootTime 113
+	mov x1, x0
+	mov x0, #7 
+END_SYSCALL_CLOCK getClockBootTime
+
+
+
+/**
+  long long time[2];
+  void getTimeOfDay(time);
+  stores the number of seconds (in time[0]) and microseconds (in time[1]) since 
+  the Epoch 1970-01-01 00:00:00 +0000 (UTC).
+  See: https://man7.org/linux/man-pages/man2/gettimeofday.2.html
+ */
+SYSCALL getTimeOfDay 169
+
+
+/**
+ See: https://man7.org/linux/man-pages/man2/execve.2.html
+ */
+SYSCALL execve 221
+
+
+.equ MAP_SHARED, 1
+.equ PROT_READ,1
+.equ PROT_WRITE,2
+
+/**                        x0         x1          x2
+ long long int mmap_rws(int fd, int length,  int offset, );
+ */
+BEGIN_SYSCALL mmap_rws 222 
+     mov x4, x0 
+     mov x5, x2
+     mov x0, #0 //Kernel selects address
+     mov x2, #(PROT_READ + PROT_WRITE) 
+     mov x3, #MAP_SHARED  	 
+END_SYSCALL mmap_rws
+
+/** 
+            x0         x1           x2         x3       x4       x5 
+    mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+*/
+SYSCALL mmap 222
+
+
+/**
+See: https://www.man7.org/linux/man-pages/man2/vfork.2.html
+*/
+SYSCALL vfork 1071
+
