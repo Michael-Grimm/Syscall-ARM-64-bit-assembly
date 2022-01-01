@@ -415,6 +415,11 @@ END_SYSCALL mmap_rws
 */
 SYSCALL mmap 222
 
+/**
+   munmap(long long int address);
+*/   
+SYSCALL munmap 215
+
 
 /**
 See: https://www.man7.org/linux/man-pages/man2/vfork.2.html

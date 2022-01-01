@@ -250,7 +250,16 @@ int getCwd(char *buf, int buflen);
  See: https://man7.org/linux/man-pages/man2/mmap.2.html
  */ 
  long long int mmap_rws(int fd, int length, int offset); 
-  
+ 
+ /**
+ Syscall 215
+ int munmap(long long int address, int length); 
+ Unmaps the mapping created with mmap
+ Input: address - memory address of the mapping
+        length - the length of the mapping in bytes
+ Returns 0 or negative error number
+ */
+ int munmap(long long int address, int length); 
   
  /**
   Syscall 1071
